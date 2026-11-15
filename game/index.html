@@ -44,8 +44,9 @@
   #crosshair i:nth-child(3) { top: 10px; left: calc(0px - var(--spread)); height: 2px; width: 7px; }
   #crosshair i:nth-child(4) { top: 10px; right: calc(0px - var(--spread)); height: 2px; width: 7px; }
 
-  #hitmarker { position: fixed; left: 50%; top: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; }
-  #hitmarker.on { opacity: 1; }
+  #hitmarker { position: fixed; left: 50%; top: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; transition: scale 90ms ease-out, opacity 90ms linear; }
+  #hitmarker.on { opacity: 1; scale: 1.4; }
+  #hitmarker.kill { scale: 1.7; }
   #hitmarker.kill i { background: var(--red); }
   #hitmarker i { position: absolute; background: var(--accent); }
   #hitmarker i:nth-child(1) { left: 12px; top: 0; width: 2px; height: 8px; }
@@ -61,7 +62,7 @@
   #score-value { font-family: var(--font-readout); font-size: 15px; color: var(--ink); }
 
   #feed { position: fixed; top: 18px; right: 24px; display: grid; gap: 4px; justify-items: end; font-size: 13px; }
-  .feed-line { background: color-mix(in srgb, var(--canvas) 78%, transparent); padding: 3px 8px; border-radius: var(--radius-panel); transition: opacity 1s linear; }
+  .feed-line { background: color-mix(in srgb, var(--canvas) 88%, transparent); padding: 3px 8px; border-radius: var(--radius-panel); border-left: 3px solid var(--hairline); transition: opacity 1s linear; font-weight: 600; }
   .feed-line.fade { opacity: 0; }
   .team-van { color: var(--accent); }
   .team-war { color: var(--teal); }
