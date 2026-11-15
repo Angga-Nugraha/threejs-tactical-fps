@@ -4,6 +4,7 @@
 // rig owns ammo, reloads and the view models; main.js owns the ray and the damage.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
+import { flashTexture } from './textures.js';
 
 export const WEAPONS = {
   p9: {
@@ -44,28 +45,65 @@ export function createWeaponRig(camera, audio) {
     return mesh;
   }
 
-  // One view model per gun, all built from boxes, each with its own silhouette.
+  // A barrel along -z (down the sights).
+  function barrel(r, len, x, y, z, mat) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 12), mat);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(x, y, z);
+    return mesh;
+  }
+
+  const amberLens = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#ffb347'), emissive: new THREE.Color('#ff9a2e'), emissiveIntensity: 1.6, roughness: 0.2, metalness: 0.1,
+  });
+
+  // One view model per gun, built from boxes and cylinders, each with its own
+  // silhouette: slide and sights on the pistol, pump and tube on the shotgun,
+  // handguard, rail, magazine and brake on the rifle, scope and long barrel
+  // on the DMR.
   const models = {};
   const p9 = new THREE.Group();
-  p9.add(part(0.07, 0.09, 0.3, 0, 0, -0.1, steel));
-  p9.add(part(0.06, 0.12, 0.08, 0, -0.08, 0.05, grip));
+  p9.add(part(0.07, 0.08, 0.32, 0, 0.01, -0.1, steel));
+  p9.add(barrel(0.018, 0.1, 0, 0.01, -0.3, dark));
+  p9.add(part(0.06, 0.13, 0.08, 0, -0.09, 0.04, grip));
+  p9.add(part(0.05, 0.02, 0.09, 0, -0.05, -0.03, dark));
+  p9.add(part(0.012, 0.02, 0.012, 0, 0.06, -0.24, dark));
+  p9.add(part(0.05, 0.02, 0.015, 0, 0.06, 0.05, dark));
   models.p9 = p9;
   const scatter = new THREE.Group();
-  scatter.add(part(0.09, 0.1, 0.5, 0, 0, -0.15, dark));
-  scatter.add(part(0.07, 0.07, 0.42, 0, -0.045, -0.2, steel));
-  scatter.add(part(0.07, 0.09, 0.2, 0, -0.02, 0.28, grip));
+  scatter.add(part(0.09, 0.11, 0.34, 0, 0, -0.05, dark));
+  scatter.add(barrel(0.03, 0.42, 0, 0.03, -0.42, steel));
+  scatter.add(barrel(0.025, 0.36, 0, -0.03, -0.4, grip));
+  scatter.add(part(0.08, 0.07, 0.2, 0, -0.045, -0.32, grip));
+  scatter.add(part(0.08, 0.1, 0.24, 0, -0.02, 0.26, dark));
+  scatter.add(part(0.07, 0.1, 0.08, 0, -0.09, 0.12, grip));
+  scatter.add(part(0.012, 0.02, 0.012, 0, 0.07, -0.6, dark));
   models.scatter = scatter;
   const pike = new THREE.Group();
-  pike.add(part(0.09, 0.1, 0.42, 0, 0, -0.08, steel));
-  pike.add(part(0.045, 0.045, 0.4, 0, 0.025, -0.44, grip));
-  pike.add(part(0.075, 0.08, 0.22, 0, -0.02, 0.28, grip));
-  pike.add(part(0.05, 0.06, 0.12, 0, 0.07, -0.12, dark));
+  pike.add(part(0.09, 0.1, 0.4, 0, 0, -0.06, steel));
+  pike.add(barrel(0.022, 0.4, 0, 0.02, -0.44, dark));
+  pike.add(barrel(0.035, 0.06, 0, 0.02, -0.64, grip));
+  pike.add(part(0.08, 0.08, 0.3, 0, 0.01, -0.32, dark));
+  pike.add(part(0.03, 0.015, 0.28, 0, 0.06, -0.32, grip));
+  pike.add(part(0.07, 0.09, 0.22, 0, -0.01, 0.28, dark));
+  const pikeMag = part(0.06, 0.14, 0.1, 0, -0.11, -0.02, grip);
+  pikeMag.rotation.x = 0.15;
+  pike.add(pikeMag);
+  pike.add(part(0.06, 0.1, 0.07, 0, -0.09, 0.14, grip));
+  pike.add(part(0.05, 0.05, 0.1, 0, 0.075, -0.1, dark));
+  pike.add(part(0.015, 0.04, 0.015, 0, 0.06, -0.5, dark));
   models.pike = pike;
   const longshot = new THREE.Group();
-  longshot.add(part(0.08, 0.09, 0.55, 0, 0, -0.15, dark));
-  longshot.add(part(0.04, 0.04, 0.5, 0, 0.02, -0.5, steel));
-  longshot.add(part(0.06, 0.05, 0.14, 0, 0.07, -0.1, steel));
-  longshot.add(part(0.07, 0.09, 0.2, 0, -0.02, 0.3, grip));
+  longshot.add(part(0.08, 0.09, 0.5, 0, 0, -0.12, dark));
+  longshot.add(barrel(0.018, 0.55, 0, 0.015, -0.55, steel));
+  longshot.add(barrel(0.03, 0.05, 0, 0.015, -0.82, grip));
+  longshot.add(barrel(0.035, 0.22, 0, 0.075, -0.12, steel));
+  const lens = barrel(0.03, 0.012, 0, 0.075, -0.235, amberLens);
+  longshot.add(lens);
+  longshot.add(part(0.07, 0.06, 0.2, 0, -0.02, -0.35, grip));
+  longshot.add(part(0.07, 0.09, 0.26, 0, -0.01, 0.3, dark));
+  longshot.add(part(0.05, 0.1, 0.08, 0, -0.1, 0, grip));
+  longshot.add(part(0.06, 0.1, 0.07, 0, -0.09, 0.16, grip));
   models.longshot = longshot;
   for (const id of ORDER) {
     models[id].position.set(0.3, -0.25, -0.55);
@@ -75,13 +113,13 @@ export function createWeaponRig(camera, audio) {
   }
 
   const flash = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.26, 0.26),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.muzzle), transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }),
+    new THREE.PlaneGeometry(0.44, 0.44),
+    new THREE.MeshBasicMaterial({ map: flashTexture(), transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }),
   );
   flash.position.set(0.3, -0.22, -1.0);
   flash.visible = false;
   camera.add(flash);
-  const flashLight = new THREE.PointLight(new THREE.Color(PALETTE.muzzle), 0, 5);
+  const flashLight = new THREE.PointLight(new THREE.Color(PALETTE.muzzle), 0, 7);
   flashLight.position.set(0.3, -0.21, -0.7);
   camera.add(flashLight);
 
@@ -107,15 +145,17 @@ export function createWeaponRig(camera, audio) {
     state.cooldown = Math.max(0, state.cooldown - dt);
     state.flash = Math.max(0, state.flash - dt);
     state.heat = Math.max(0, state.heat - dt * 1.6);
-    state.kick += (0 - state.kick) * Math.min(1, dt * 14);
+    // Recoil kick with a slower recovery than round 1 (dt*10 vs dt*14): the
+    // kick reads on screen instead of snapping back in one frame.
+    state.kick += (0 - state.kick) * Math.min(1, dt * 10);
     const model = models[state.current];
     state.bobPhase += dt * (2 + moving * 1.6);
     const bob = moving > 0.5 ? Math.sin(state.bobPhase * 2) * 0.006 : 0;
     model.position.set(0.3 + bob, -0.25 + Math.abs(Math.cos(state.bobPhase)) * (moving > 0.5 ? 0.008 : 0), -0.55 + state.kick);
-    model.rotation.x = state.kick * 1.4;
+    model.rotation.x = state.kick * 2.2;
     flash.visible = state.flash > 0;
     flash.rotation.z = state.flash * 30;
-    flashLight.intensity = state.flash > 0 ? 18 : 0;
+    flashLight.intensity = state.flash > 0 ? 30 : 0;
     if (state.reloadLeft > 0) {
       state.reloadLeft = Math.max(0, state.reloadLeft - dt);
       model.rotation.x = -0.55 * Math.min(1, (def().reload - state.reloadLeft) * 2);
@@ -141,8 +181,8 @@ export function createWeaponRig(camera, audio) {
     },
     pullTrigger() {
       state.cooldown = def().gap;
-      state.flash = 0.06;
-      state.kick = 0.055;
+      state.flash = 0.09;
+      state.kick = 0.08;
       state.heat = Math.min(1, state.heat + (def().kind === 'rifle' ? 0.14 : 0.08));
       audio.shot(def().kind);
     },

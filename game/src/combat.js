@@ -4,9 +4,12 @@
 // how much health; it only resolves the geometry of a shot.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
+import { scorchTexture } from './textures.js';
 
 const TRACER_POOL = 24;
 const IMPACT_POOL = 12;
+const SPARK_SHARDS = 5;
+const DECAL_POOL = 8;
 const GRENADE_GRAVITY = 12;
 
 export function createCombat(scene, world) {
@@ -17,9 +20,10 @@ export function createCombat(scene, world) {
   const tmp = new THREE.Vector3();
   const noise = [];
 
-  // Tracer pool: one line per shot, fading over 120 ms.
+  // Tracer pool: one line per shot, fading over 180 ms (was 120 ms — the old
+  // tracer expired before a screenshot could catch it).
   const tracers = [];
-  const tracerMat = new THREE.LineBasicMaterial({ color: new THREE.Color(PALETTE.tracer), transparent: true, opacity: 0.9 });
+  const tracerMat = new THREE.LineBasicMaterial({ color: new THREE.Color('#ffe9a8'), transparent: true, opacity: 1.0 });
   for (let i = 0; i < TRACER_POOL; i += 1) {
     const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
     const line = new THREE.Line(geo, tracerMat.clone());
@@ -32,14 +36,44 @@ export function createCombat(scene, world) {
 
   // Impact pool: small flashing octahedra at bullet strike points.
   const impacts = [];
-  const impactMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.muzzle), transparent: true, opacity: 0.9 });
+  const impactMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.muzzle), transparent: true, opacity: 1.0 });
   for (let i = 0; i < IMPACT_POOL; i += 1) {
-    const mesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.07), impactMat.clone());
+    const mesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.11), impactMat.clone());
     mesh.visible = false;
     scene.add(mesh);
     impacts.push({ mesh, life: 0 });
   }
   let impactIdx = 0;
+
+  // Spark bursts: a few hot shards that fly out of the strike point and fall.
+  const sparkGeo = new THREE.TetrahedronGeometry(0.05);
+  const sparkMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffcf7a'), transparent: true, opacity: 0.95 });
+  const sparks = [];
+  for (let i = 0; i < IMPACT_POOL; i += 1) {
+    const shards = [];
+    for (let s = 0; s < SPARK_SHARDS; s += 1) {
+      const mesh = new THREE.Mesh(sparkGeo, sparkMat.clone());
+      mesh.visible = false;
+      scene.add(mesh);
+      shards.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+    }
+    sparks.push(shards);
+  }
+
+  // Decal pool: dark scorch marks left on the surface where bullets struck.
+  const decalTex = scorchTexture();
+  const decals = [];
+  for (let i = 0; i < DECAL_POOL; i += 1) {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.55, 0.55),
+      new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, opacity: 0, depthWrite: false }),
+    );
+    mesh.visible = false;
+    scene.add(mesh);
+    decals.push({ mesh, life: 0 });
+  }
+  let decalIdx = 0;
+  const tmpNormal = new THREE.Vector3();
 
   const grenades = [];
   const grenadeGeo = new THREE.SphereGeometry(0.09, 10, 8);
@@ -54,18 +88,43 @@ export function createCombat(scene, world) {
     pos.setXYZ(1, to.x, to.y, to.z);
     pos.needsUpdate = true;
     t.line.visible = true;
-    t.life = 0.12;
-    t.line.material.opacity = 0.9;
+    t.life = 0.18;
+    t.line.material.opacity = 1.0;
   }
 
-  function spawnImpact(point) {
-    const im = impacts[impactIdx];
+  function spawnImpact(point, normal, random) {
+    const slot = impactIdx;
     impactIdx = (impactIdx + 1) % IMPACT_POOL;
+    const im = impacts[slot];
     im.mesh.position.copy(point);
     im.mesh.visible = true;
-    im.mesh.scale.setScalar(1);
-    im.life = 0.18;
-    im.mesh.material.opacity = 0.9;
+    im.mesh.scale.setScalar(1.4);
+    im.life = 0.26;
+    im.mesh.material.opacity = 1.0;
+    // Spark burst from the same pool slot. Seeded `random` (the shooter's),
+    // not Math.random: impact feedback stays deterministic like the rest of
+    // the sim.
+    for (const shard of sparks[slot]) {
+      shard.mesh.position.copy(point);
+      shard.vel.set(
+        (random() * 2 - 1) * 3.0 + (normal ? normal.x * 1.5 : 0),
+        random() * 3.2 + 0.8,
+        (random() * 2 - 1) * 3.0 + (normal ? normal.z * 1.5 : 0),
+      );
+      shard.mesh.visible = true;
+      shard.mesh.material.opacity = 0.95;
+      shard.life = 0.32;
+    }
+    // Scorch decal on the struck surface.
+    if (normal) {
+      const d = decals[decalIdx];
+      decalIdx = (decalIdx + 1) % DECAL_POOL;
+      d.mesh.position.copy(point).addScaledVector(normal, 0.015);
+      d.mesh.lookAt(tmp.copy(point).addScaledVector(normal, 1));
+      d.mesh.visible = true;
+      d.mesh.material.opacity = 0.85;
+      d.life = 5;
+    }
   }
 
   // Fire one trigger pull. shooter: {eye: Vector3, team, id, name}. def: a WEAPONS
@@ -98,7 +157,8 @@ export function createCombat(scene, world) {
           if (result === 'kill') killed = userData.actor;
           anyHit = true;
         } else {
-          spawnImpact(hitPoint);
+          tmpNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+          spawnImpact(hitPoint, tmpNormal, random);
         }
       }
     }
@@ -125,16 +185,36 @@ export function createCombat(scene, world) {
     for (const t of tracers) {
       if (t.life > 0) {
         t.life -= dt;
-        t.line.material.opacity = Math.max(0, t.life / 0.12) * 0.9;
+        t.line.material.opacity = Math.max(0, t.life / 0.18) * 1.0;
         if (t.life <= 0) t.line.visible = false;
       }
     }
     for (const im of impacts) {
       if (im.life > 0) {
         im.life -= dt;
-        im.mesh.scale.setScalar(Math.max(0.01, im.life / 0.18));
-        im.mesh.material.opacity = Math.max(0, im.life / 0.18) * 0.9;
+        im.mesh.scale.setScalar(Math.max(0.01, im.life / 0.26) * 1.4);
+        im.mesh.material.opacity = Math.max(0, im.life / 0.26) * 1.0;
         if (im.life <= 0) im.mesh.visible = false;
+      }
+    }
+    for (const shards of sparks) {
+      for (const shard of shards) {
+        if (shard.life > 0) {
+          shard.life -= dt;
+          shard.vel.y -= 9 * dt;
+          shard.mesh.position.addScaledVector(shard.vel, dt);
+          shard.mesh.rotation.x += dt * 9;
+          shard.mesh.rotation.y += dt * 7;
+          shard.mesh.material.opacity = Math.max(0, shard.life / 0.32) * 0.95;
+          if (shard.life <= 0) shard.mesh.visible = false;
+        }
+      }
+    }
+    for (const d of decals) {
+      if (d.life > 0) {
+        d.life -= dt;
+        d.mesh.material.opacity = 0.75 * (d.life / 5);
+        if (d.life <= 0) d.mesh.visible = false;
       }
     }
     for (let i = grenades.length - 1; i >= 0; i -= 1) {
@@ -210,6 +290,8 @@ export function createCombat(scene, world) {
       grenades.length = 0;
       for (const t of tracers) { t.life = 0; t.line.visible = false; }
       for (const im of impacts) { im.life = 0; im.mesh.visible = false; }
+      for (const shards of sparks) for (const s of shards) { s.life = 0; s.mesh.visible = false; }
+      for (const d of decals) { d.life = 0; d.mesh.visible = false; }
       noise.length = 0;
     },
   };

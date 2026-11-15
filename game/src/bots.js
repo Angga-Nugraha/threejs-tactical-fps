@@ -9,9 +9,16 @@ import { PALETTE } from './palette.js';
 import { pick, shuffle } from './rng.js';
 
 const SKILLS = {
-  veteran: { aimErr: 0.01, reaction: 0.22, burst: 4, pauseMin: 0.5, pauseMax: 0.9, speed: 5.0, hp: 100 },
-  regular: { aimErr: 0.018, reaction: 0.38, burst: 3, pauseMin: 0.7, pauseMax: 1.2, speed: 4.6, hp: 100 },
-  rookie: { aimErr: 0.032, reaction: 0.6, burst: 2, pauseMin: 0.9, pauseMax: 1.5, speed: 4.2, hp: 100 },
+  // Tuned 2026-11-15 (polish pass): the round-1 numbers let a veteran Pike burst
+  // (4 hits x 30 dmg, aimErr 0.01) delete a 100 HP bot in ~0.4 s, and contact
+  // happened at t~1 s across the 22 m spawn-to-hold sightlines — 3 Vanguard
+  // bots died in the first 5 s, Wardens took 0 deaths in 50 s. Tiers keep their
+  // order (veteran > regular > rookie); every number below only slows the kill
+  // chain: wider aim error with stronger range falloff, longer pauses between
+  // bursts, a settle delay after first acquiring a target.
+  veteran: { aimErr: 0.016, reaction: 0.3, burst: 3, pauseMin: 0.8, pauseMax: 1.4, speed: 5.0, hp: 100 },
+  regular: { aimErr: 0.028, reaction: 0.5, burst: 3, pauseMin: 1.1, pauseMax: 1.9, speed: 4.6, hp: 100 },
+  rookie: { aimErr: 0.05, reaction: 0.75, burst: 2, pauseMin: 1.4, pauseMax: 2.4, speed: 4.2, hp: 100 },
 };
 
 const VANGUARD_NAMES = ['Rook', 'Fable', 'Ivo', 'Mara'];
@@ -25,6 +32,25 @@ const EYE = new THREE.Vector3();
 const TARGET_POS = new THREE.Vector3();
 const TO_TARGET = new THREE.Vector3();
 
+// Shared geometries: 9 bots x 14 meshes used to allocate 126 geometries; the
+// boxes are identical sizes, so one geometry per size serves every bot.
+const GEO = {};
+function boxGeo(w, h, d) {
+  const key = `b${w}x${h}x${d}`;
+  if (!GEO[key]) GEO[key] = new THREE.BoxGeometry(w, h, d);
+  return GEO[key];
+}
+function sphereGeo(r) {
+  const key = `s${r}`;
+  if (!GEO[key]) GEO[key] = new THREE.SphereGeometry(r, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  return GEO[key];
+}
+function cylGeo(r, len) {
+  const key = `c${r}x${len}`;
+  if (!GEO[key]) GEO[key] = new THREE.CylinderGeometry(r, r, len, 8);
+  return GEO[key];
+}
+
 export function createBots(scene, world, random) {
   const list = [];
   const hitMeshes = [];
@@ -33,25 +59,63 @@ export function createBots(scene, world, random) {
   const darkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#211a15'), roughness: 0.6, metalness: 0.25 });
   const teamMats = {
     // A touch of emissive so the team colour reads at dusk, from across the yard.
-    vanguard: new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.vanguard), roughness: 0.6, emissive: new THREE.Color(PALETTE.vanguard), emissiveIntensity: 0.35 }),
-    warden: new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.warden), roughness: 0.6, emissive: new THREE.Color(PALETTE.warden), emissiveIntensity: 0.35 }),
+    vanguard: new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.vanguard), roughness: 0.6, emissive: new THREE.Color(PALETTE.vanguard), emissiveIntensity: 0.5 }),
+    warden: new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.warden), roughness: 0.6, emissive: new THREE.Color(PALETTE.warden), emissiveIntensity: 0.5 }),
   };
 
   function buildMesh(bot) {
     const group = new THREE.Group();
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.62, 0.3), darkMat);
+    const teamMat = teamMats[bot.team];
+    // Hitboxes, UNCHANGED from round 1: torso 0.56x0.72x0.34 at y 1.0 and head
+    // 0.3^3 at y 1.56 are the only meshes the shooter can hit. Everything else
+    // below is visual dressing around them.
+    const legs = new THREE.Mesh(boxGeo(0.42, 0.62, 0.3), darkMat);
     legs.position.y = 0.31;
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.72, 0.34), teamMats[bot.team]);
+    const torso = new THREE.Mesh(boxGeo(0.56, 0.72, 0.34), teamMat);
     torso.position.y = 1.0;
     torso.castShadow = true;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), headMat);
+    const head = new THREE.Mesh(boxGeo(0.3, 0.3, 0.3), headMat);
     head.position.y = 1.56;
     head.castShadow = true;
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.09, 0.05), teamMats[bot.team]);
+    const visor = new THREE.Mesh(boxGeo(0.26, 0.09, 0.05), teamMat);
     visor.position.set(0, 1.58, 0.16);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.55), darkMat);
-    gun.position.set(0.18, 1.15, -0.28);
-    group.add(legs, torso, head, visor, gun);
+    // Helmet: dome + brim over the head, team-tinted.
+    const helmet = new THREE.Mesh(sphereGeo(0.21), teamMat);
+    helmet.position.y = 1.62;
+    helmet.scale.set(1, 0.75, 1);
+    const brim = new THREE.Mesh(boxGeo(0.36, 0.04, 0.36), darkMat);
+    brim.position.y = 1.66;
+    // Vest panel over the torso front, darker shade of the team colour.
+    const vest = new THREE.Mesh(boxGeo(0.5, 0.55, 0.06), darkMat);
+    vest.position.set(0, 1.0, 0.19);
+    // Team stripe across the vest front: the silhouette cue that reads at range.
+    const stripe = new THREE.Mesh(boxGeo(0.5, 0.09, 0.02), teamMat);
+    stripe.position.set(0, 1.24, 0.23);
+    // Shoulder pads, team-tinted so the team reads from the side and behind.
+    const padL = new THREE.Mesh(boxGeo(0.14, 0.1, 0.3), teamMat);
+    padL.position.set(-0.32, 1.32, 0);
+    const padR = new THREE.Mesh(boxGeo(0.14, 0.1, 0.3), teamMat);
+    padR.position.set(0.32, 1.32, 0);
+    // Backpack.
+    const pack = new THREE.Mesh(boxGeo(0.4, 0.5, 0.18), darkMat);
+    pack.position.set(0, 1.05, -0.26);
+    // Team armband on the left arm: a second colour cue from any angle.
+    const band = new THREE.Mesh(boxGeo(0.13, 0.06, 0.13), teamMat);
+    band.position.set(-0.2, 1.12, -0.28);
+    // Arms reaching forward to the gun, and the gun itself: receiver, barrel,
+    // stock — held across the chest.
+    const armL = new THREE.Mesh(boxGeo(0.11, 0.11, 0.42), bodyMat);
+    armL.position.set(-0.2, 1.12, -0.28);
+    armL.rotation.x = 0.15;
+    const armR = new THREE.Mesh(boxGeo(0.11, 0.11, 0.42), bodyMat);
+    armR.position.set(0.2, 1.12, -0.28);
+    armR.rotation.x = 0.15;
+    const gun = new THREE.Mesh(boxGeo(0.07, 0.09, 0.55), darkMat);
+    gun.position.set(0.1, 1.15, -0.32);
+    const gunBarrel = new THREE.Mesh(cylGeo(0.02, 0.3), darkMat);
+    gunBarrel.rotation.x = Math.PI / 2;
+    gunBarrel.position.set(0.1, 1.17, -0.68);
+    group.add(legs, torso, head, visor, helmet, brim, vest, stripe, padL, padR, pack, band, armL, armR, gun, gunBarrel);
     torso.userData = { actor: bot, part: 'body' };
     head.userData = { actor: bot, part: 'head' };
     bot.hitMeshes = [torso, head];
@@ -82,6 +146,7 @@ export function createBots(scene, world, random) {
       burstLeft: 0,
       burstTimer: 0,
       pauseTimer: 0,
+      acquireTimer: 0,
       thinkTimer: random() * 0.12,
       strafeDir: 1,
       strafeTimer: 0,
@@ -159,6 +224,7 @@ export function createBots(scene, world, random) {
       bot.burstLeft = 0;
       bot.burstTimer = 0;
       bot.pauseTimer = 0;
+      bot.acquireTimer = 0;
       bot.channel = 0;
       bot.channelKind = null;
       bot.grenades = 1;
@@ -218,12 +284,19 @@ export function createBots(scene, world, random) {
       bot.strafeTimer -= dt;
       bot.burstTimer -= dt;
       bot.pauseTimer -= dt;
+      bot.acquireTimer -= dt;
 
       // --- Perception, staggered by skill so veterans react first.
       if (bot.thinkTimer <= 0) {
         bot.thinkTimer = 0.12 + bot.skill.reaction * 0.4;
         const seen = visibleEnemy(bot, ctx);
         if (seen) {
+          // New target: the bot needs a beat to settle its aim before the
+          // first shot — no more instant bursts the moment a lane opens.
+          if (!bot.target || bot.target !== seen.enemy) {
+            bot.acquireTimer = bot.skill.reaction + 0.35 + random() * 0.3;
+            bot.burstLeft = 0;
+          }
           bot.target = seen.enemy;
           bot.lastSeen.set(seen.enemy.eyePos.x, seen.enemy.eyePos.y, seen.enemy.eyePos.z);
           bot.lastSeenTime = ctx.time;
@@ -356,7 +429,9 @@ export function createBots(scene, world, random) {
 
       // --- Shooting: bursts with pauses, aim error by skill and range.
       // Only while the round is live; the buy phase is for walking, not fighting.
-      if (ctx.live && bot.state === 'combat' && bot.target && bot.target.alive && bot.burstTimer <= 0) {
+      // Gated on acquireTimer: a bot that just spotted a target holds fire
+      // until it has settled its aim.
+      if (ctx.live && bot.state === 'combat' && bot.target && bot.target.alive && bot.burstTimer <= 0 && bot.acquireTimer <= 0) {
         const tp = bot.target.eyePos;
         const dx = tp.x - body.position.x;
         const dz = tp.z - body.position.z;
@@ -372,10 +447,10 @@ export function createBots(scene, world, random) {
           } else {
             bot.burstLeft -= 1;
             bot.burstTimer = WEAPONS[bot.weaponId].gap;
-            const aimAtHead = random() < 0.2;
+            const aimAtHead = random() < 0.12;
             TARGET_POS.set(tp.x, tp.y + (aimAtHead ? 0.45 : -0.15), tp.z);
             TO_TARGET.set(TARGET_POS.x - eye.x, TARGET_POS.y - eye.y, TARGET_POS.z - eye.z).normalize();
-            const err = bot.skill.aimErr * (1 + dist / 45) * (bot.target.crouching ? 1.25 : 1);
+            const err = bot.skill.aimErr * (1 + dist / 28) * (bot.target.crouching ? 1.25 : 1);
             ctx.shootBot(bot, eye, TO_TARGET, err);
           }
         } else {

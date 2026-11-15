@@ -28,11 +28,13 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.canvas);
-scene.fog = new THREE.Fog(new THREE.Color(PALETTE.canvas), 30, 75);
+scene.fog = new THREE.Fog(new THREE.Color('#4a3547'), 32, 88);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
@@ -54,6 +56,8 @@ const playerActor = {
 };
 let vestActive = false;
 let grenadeSelected = false;
+let lastHudWeapon = 'p9';
+let lastHudGrenades = 0;
 let started = false;
 let frozen = false;
 let elapsed = 0;
@@ -192,6 +196,13 @@ function buyItem(id) {
 
 function damageActor(actor, dmg, part, attacker) {
   if (!actor.alive) return null;
+  // Bot-vs-bot damage is scaled down (polish pass 2026-11-15): with full Pike
+  // damage a veteran burst deleted a bot in ~0.4 s and 3 Vanguard bots died
+  // in the first 5 s of the round. Player damage is untouched — the player
+  // still kills (and is killed) at full weapon numbers.
+  if (actor.id !== 'player' && attacker && attacker.id !== 'player' && attacker.id !== 'grenade' && part !== 'blast') {
+    dmg *= 0.7;
+  }
   if (actor.id === 'player') {
     playerActor.hp -= dmg;
     hud.setHealth(playerActor.hp, playerActor.maxHp);
@@ -363,6 +374,16 @@ function step(dt) {
 
   rig.step(dt, player.groundSpeed());
   combat.step(dt, grenadeDamageArea);
+  if (world.update) world.update(dt);
+  // Weapon-slot HUD follows the rig from every path that can change it
+  // (buy menu, 1–4 keys, __sable direct calls, ?shot staging): the old code
+  // only called setWeapon from buyItem, so switching with the number keys
+  // left the P9 slot highlighted while the Pike was equipped.
+  if (rig.state.current !== lastHudWeapon || rig.state.grenades !== lastHudGrenades) {
+    lastHudWeapon = rig.state.current;
+    lastHudGrenades = rig.state.grenades;
+    hud.setWeapon(rig.state.current, rig.state.grenades);
+  }
 
   // HUD readouts.
   hud.setTimer(match.phaseTime(), match.state.phase === 'planted');
@@ -504,7 +525,10 @@ function runShot(name) {
     settle(6);
     aimAt(new THREE.Vector3(2.5, 1.3, -6));
     shootPlayer();
-    settle(8); // let the recoil settle so the gun reads level in the frame
+    // Final shot right before the capture: the muzzle flash (0.09 s) and the
+    // tracer (0.18 s) are still lit when the frame is painted, instead of
+    // having expired during a long settle.
+    settle(2);
     hud.clearBanner();
     // The hitmarker from that shot stays on for the capture (it auto-hides after 120 ms).
   } else if (name === 'end') {
@@ -512,14 +536,17 @@ function runShot(name) {
     match.state.score.warden = 0;
     match.state.phase = 'end';
     const wardens = bots.list.filter((b) => b.team === 'warden');
-    wardens[0].mover.teleport(-3, -2, 0);
+    wardens[0].mover.teleport(-12, -4, 0);
     wardens[0].hp = 0;
     wardens[0].alive = false;
     wardens[0].state = 'dead';
     wardens[0].fallT = 1;
     wardens[0].mesh.rotation.x = -Math.PI / 2;
-    wardens[0].mesh.position.set(-3, 0.15, -2);
-    player.teleport(-6, -3, Math.PI * 0.85);
+    wardens[0].mesh.position.set(-12, 0.15, -4);
+    // Stand south-east of Site A looking in: the site containers, hazard
+    // decals and the lamp glow read around the overlay, and the fallen
+    // Warden lies in the sightline instead of behind the west wall.
+    player.teleport(-10, 2, Math.PI * 0.85);
     settle(10);
     aimAt(new THREE.Vector3(-14, 1.5, -9));
     hud.setScore(1, 0, 1);
@@ -561,7 +588,7 @@ syncCamera();
 match.startRound();
 // Debug/testing hook: read-only handles for automated play-tests.
 window.__sable = {
-  player, playerActor, match, bots, rig, world, camera, step,
+  player, playerActor, match, bots, rig, world, camera, step, renderer, scene, audio, hud, buyItem,
   project(x, y, z) {
     const v = new THREE.Vector3(x, y, z).project(camera);
     return { x: v.x, y: v.y, z: v.z };
