@@ -8,6 +8,16 @@ A round-based tactical FPS in the browser, built on three.js 0.187.0. Vanguard
 attacks two sites in a dusk freight yard; the Wardens hold them. Plant the beacon
 or eliminate the other team, earn money, buy better guns, and do it again.
 
+The yard is fully dressed: every surface is a seeded procedural texture —
+corrugated container steel with rust and stencil codes, cracked concrete, plank
+crates, labelled barrels — under a gradient dusk sky with a skyline, cranes,
+drifting clouds, warm lamp pools, tire marks and wet puddles. Bots are helmeted
+soldiers with team shoulder pads, vest stripes and held guns, and firefights
+read: longer, brighter tracers, spark bursts, scorch decals, and a bigger muzzle
+flash. Bot balance is tuned so rounds last — wider aim error with range falloff,
+a settle delay on first contact, and bot-vs-bot damage scaled to 0.7×, so
+firefights develop instead of ending in the first five seconds.
+
 ## The game
 
 - **First-person combat** — mouse look, WASD movement with acceleration, crouch,
@@ -60,15 +70,27 @@ No build step, no network requests: `game/` is plain static files, and three.js
   beacon, and the round flow; `?shot=start|play|buy|end&seed=N` stages a
   deterministic frame for screenshots.
 - `game/src/world.js` — the yard: geometry, colliders, the two sites, the
-  waypoint graph, and the line-of-sight test.
+  waypoint graph, and the line-of-sight test; plus the visual layer — dusk sky
+  dome, skyline and cranes, lamp posts with light pools and sagging wires,
+  stacked containers, sandbags, fences, pipes, signage and site decals.
+  Gameplay boxes keep their exact round-1 positions and sizes.
 - `game/src/player.js` — one mover shared by the player and the bots:
   acceleration, friction, gravity, crouch, jump, axis-separated collision.
 - `game/src/weapons.js` — four guns and a grenade: numbers, view models,
-  spread/recoil, reloads, the shop.
+  spread/recoil, reloads, the shop. View models are built as real guns —
+  barrels, handguards, rails, magazines, a scoped DMR — with a star-sprite
+  muzzle flash and a slower, readable recoil kick.
 - `game/src/bots.js` — bot AI: routes, holds, perception, burst fire, grenades,
-  defuse duty.
+  defuse duty. Tuned so rounds breathe: aim error, reaction and burst pauses
+  per skill tier, a settle delay on acquiring a target, and shared geometries
+  so nine soldiers cost ~106 geometries instead of ~121.
 - `game/src/combat.js` — hitscan shooting, tracers, impacts, grenade physics;
-  pooled meshes, no per-frame allocation in hot loops.
+  pooled meshes, no per-frame allocation in hot loops. Tracers live 180 ms,
+  impacts burst into seeded spark shards and leave dark scorch decals.
+- `game/src/textures.js` — the procedural texture painters: container steel,
+  concrete, crate planks, barrels, hazard stripes, site letters, signs, sky,
+  glow, clouds, muzzle flash, chain-link fence and tire marks. All seeded,
+  zero network requests.
 - `game/src/rounds.js` — the match state machine and the economy.
 - `game/src/hud.js` — every DOM readout, the kill feed, the buy menu.
 - `game/src/input.js`, `game/src/audio.js`, `game/src/rng.js`, `game/src/palette.js`
